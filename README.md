@@ -41,6 +41,7 @@ The storefront needs `BYPASS_SECRET` and `API_BASE_URL`. The agents also need AI
 | `VERCEL_OIDC_TOKEN` | Local AI calls | AI Gateway credential written by `vercel env pull`; expires after 12 hours locally. Not needed on Vercel, where OIDC is automatic. |
 | `AI_GATEWAY_API_KEY` | No | AI Gateway API key, used instead of OIDC when set. Server-only. |
 | `SHOPPING_AGENT_MODEL` | No | AI Gateway model for the shopping agent (must support tool calls). Defaults to `openai/gpt-4.1-mini`. |
+| `ADMIN_AGENT_MODEL` | No | AI Gateway model for the store admin agent (must support tool calls). Defaults to `openai/gpt-4.1`. |
 | `NEXT_PUBLIC_SITE_URL` | No | Public site URL used for metadata. Defaults to `http://localhost:3000`. |
 
 `.env.local` is gitignored; `.env.example` is the redacted template.

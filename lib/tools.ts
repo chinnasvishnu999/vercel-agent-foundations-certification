@@ -87,7 +87,7 @@ function toSummary(product: Product): ProductSummary {
  * Turn a store error into a definite answer (not found / invalid) or rethrow a
  * sanitized error for transient failures so the workflow step is retried.
  */
-function handleStoreError(err: unknown, what: string): ToolFailure {
+export function handleStoreError(err: unknown, what: string): ToolFailure {
   if (err instanceof ApiRequestError && err.status === 404) {
     return { status: "not_found", message: `No ${what} matches that request.` };
   }

@@ -20,6 +20,10 @@ export async function GET(
   if (!(await run.exists.catch(() => false))) {
     return Response.json({ error: "Unknown return." }, { status: 404 });
   }
+  // Only return workflows are reported here, never chat or admin runs.
+  if (!(await run.workflowName).endsWith("returnOrderFlow")) {
+    return Response.json({ error: "Unknown return." }, { status: 404 });
+  }
 
   const status = await run.status;
   if (status === "completed") {

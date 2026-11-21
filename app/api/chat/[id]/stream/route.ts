@@ -31,6 +31,11 @@ export async function GET(
   if (!(await run.exists.catch(() => false))) {
     return Response.json({ error: "Unknown chat run." }, { status: 404 });
   }
+  // This public endpoint only replays shopping-chat runs, never admin or
+  // return runs (they can contain back-office data).
+  if (!(await run.workflowName).endsWith("shoppingChatFlow")) {
+    return Response.json({ error: "Unknown chat run." }, { status: 404 });
+  }
 
   // The durable stream stores raw model-call parts, so replay from 0 and let
   // the transform skip to the UI chunk the client already has.
