@@ -197,6 +197,9 @@ export const getProductDetails = tool({
           description: product.description,
           images: product.images,
           tags: product.tags,
+          // Raw values for the chat's Add to cart button (the cart works in cents).
+          priceCents: product.price,
+          currency: product.currency,
           stock: stock
             ? { inStock: stock.inStock, lowStock: stock.lowStock, quantity: stock.stock }
             : null,

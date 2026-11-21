@@ -3,7 +3,6 @@
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { AlertCircle, Loader2 } from "lucide-react";
-import Link from "next/link";
 import { useState } from "react";
 
 import {
@@ -27,6 +26,9 @@ import {
   PromptInputTools,
 } from "@/components/ai-elements/prompt-input";
 import { Suggestion, Suggestions } from "@/components/ai-elements/suggestion";
+import { ProductDetailCard } from "@/components/shopping/product-detail-card";
+import { ProductResults } from "@/components/shopping/product-results";
+import { ToolPending, ToolProblem } from "@/components/shopping/tool-status";
 import { Button } from "@/components/ui/button";
 import type { ShoppingUIMessage } from "@/lib/agent-types";
 
@@ -164,10 +166,10 @@ function ChatPart({ part, role }: { part: ShoppingPart; role: string }) {
   }
 }
 
-const PENDING_LABEL: Record<string, string> = {
-  "tool-searchProducts": "Searching products…",
-  "tool-getAllCategories": "Loading categories…",
-  "tool-getProductDetails": "Looking up product details…",
+const PENDING: Record<ToolPart["type"], { label: string; cards: number }> = {
+  "tool-searchProducts": { label: "Searching products…", cards: 4 },
+  "tool-getAllCategories": { label: "Loading categories…", cards: 0 },
+  "tool-getProductDetails": { label: "Looking up product details…", cards: 0 },
 };
 
 type ToolPart = Extract<
@@ -175,65 +177,30 @@ type ToolPart = Extract<
   { type: "tool-searchProducts" | "tool-getAllCategories" | "tool-getProductDetails" }
 >;
 
-/**
- * Basic tool-result rendering: progress, failures and a compact result.
- * Richer product cards replace the success views in the next step.
- */
+/** Generative UI: each tool part renders as progress, a problem, or cards. */
 function ToolResult({ part }: { part: ToolPart }) {
   if (part.state === "input-streaming" || part.state === "input-available") {
-    return (
-      <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
-        <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-        {PENDING_LABEL[part.type]}
-      </p>
-    );
+    const { label, cards } = PENDING[part.type];
+    return <ToolPending label={label} cards={cards} />;
   }
   if (part.state === "output-error") {
     return (
-      <p className="flex items-center gap-2 text-sm text-destructive" role="alert">
-        <AlertCircle className="size-4" aria-hidden="true" />
-        That lookup failed. Please try again.
-      </p>
+      <ToolProblem kind="error" message="That lookup failed unexpectedly. Please try again." />
     );
   }
   if (part.state !== "output-available") return null;
 
   const output = part.output;
   if (output.status !== "ok") {
-    return (
-      <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
-        <AlertCircle className="size-4" aria-hidden="true" />
-        {output.message}
-      </p>
-    );
+    return <ToolProblem kind={output.status} message={output.message} />;
   }
-
   if ("products" in output) {
-    if (output.products.length === 0) {
-      return <p className="text-sm text-muted-foreground">No matching products.</p>;
-    }
     return (
-      <ul className="flex flex-col gap-1 text-sm">
-        {output.products.map((p) => (
-          <li key={p.id}>
-            <Link href={p.url} className="underline underline-offset-2">
-              {p.name}
-            </Link>{" "}
-            <span className="text-muted-foreground">{p.price}</span>
-          </li>
-        ))}
-      </ul>
+      <ProductResults products={output.products} query={output.query} category={output.category} />
     );
   }
   if ("product" in output) {
-    return (
-      <p className="text-sm">
-        <Link href={output.product.url} className="font-medium underline underline-offset-2">
-          {output.product.name}
-        </Link>{" "}
-        <span className="text-muted-foreground">{output.product.price}</span>
-      </p>
-    );
+    return <ProductDetailCard product={output.product} />;
   }
   // A successful category lookup is an internal step: the agent uses it to
   // pick a filter, so there is nothing for the shopper to see.
