@@ -22,8 +22,9 @@ import { formatPrice } from "@/lib/format";
  * notification and the refund pre-authorization are NOT repeated.
  *
  * The store decides the return 15-60 s after filing and POSTs the decision to
- * the webhook passed as `callback`. If it never arrives (for example the
- * deployment isn't publicly reachable), the workflow falls back to polling.
+ * the webhook passed as `callback` (on the public production domain in
+ * production). If it doesn't arrive within 90 s, the workflow polls the
+ * return every 30 s until a decision is recorded.
  */
 
 export type ReturnItem = { productId: string; quantity: number };
@@ -43,7 +44,27 @@ export type ReturnOutcome = {
   notes: string | null;
 };
 
-const DECISION_WAIT = "3m";
+// The store decides 15-60 s after filing. Wait that long for its callback,
+// then poll a few times in case the callback can't reach this deployment.
+const CALLBACK_WAIT = "90s";
+const POLL_INTERVAL = "30s";
+const MAX_POLLS = 8;
+
+/**
+ * Webhook URLs are built from VERCEL_URL, the per-deployment address that
+ * Vercel's deployment protection guards, so the store's callback would be
+ * rejected. In production, send the store the public production domain
+ * instead (the token still resumes this run). Elsewhere the URL is left as is
+ * and the workflow relies on polling.
+ */
+function publicCallbackUrl(webhookUrl: string): string {
+  const productionHost = process.env.VERCEL_PROJECT_PRODUCTION_URL;
+  if (process.env.VERCEL_ENV !== "production" || !productionHost) return webhookUrl;
+  const url = new URL(webhookUrl);
+  url.protocol = "https:";
+  url.host = productionHost;
+  return url.toString();
+}
 
 /** Map store errors: definite failures stop the workflow, others retry. */
 function rethrow(err: unknown, action: string): never {
@@ -87,7 +108,7 @@ async function preauthorizeRefundStep(orderId: string) {
 async function fileReturnStep(request: ReturnRequest, callback: string) {
   "use step";
   try {
-    const created = await createReturn({ ...request, callback });
+    const created = await createReturn({ ...request, callback: publicCallbackUrl(callback) });
     return { id: created.id, status: created.status };
   } catch (err) {
     rethrow(err, "Filing the return");
@@ -130,7 +151,7 @@ export async function returnOrderFlow(request: ReturnRequest): Promise<ReturnOut
   // Wait for the store's decision callback, or fall back to polling.
   const callback = await Promise.race([
     webhook.then(async (req) => (await req.json()) as DecisionPayload),
-    sleep(DECISION_WAIT).then(() => null),
+    sleep(CALLBACK_WAIT).then(() => null),
   ]);
 
   let decision: ReturnOutcome["decision"];
@@ -143,6 +164,10 @@ export async function returnOrderFlow(request: ReturnRequest): Promise<ReturnOut
     notes = callback.notes ?? null;
   } else {
     ({ decision, refundAmount, notes } = await readReturnDecisionStep(filed.id, order.currency));
+    for (let poll = 1; decision === "pending" && poll < MAX_POLLS; poll++) {
+      await sleep(POLL_INTERVAL);
+      ({ decision, refundAmount, notes } = await readReturnDecisionStep(filed.id, order.currency));
+    }
   }
 
   return {
