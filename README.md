@@ -21,23 +21,25 @@ Prerequisites: Node.js 22+ and [pnpm](https://pnpm.io).
 
 ```bash
 pnpm install
-cp .env.example .env.local   # then fill in BYPASS_SECRET
+vercel link                  # select your team and the deployed project
+vercel env pull .env.local   # BYPASS_SECRET, API_BASE_URL and an AI Gateway OIDC token
 pnpm dev
 ```
 
+Without the Vercel CLI, copy `.env.example` to `.env.local` and fill in the values yourself.
+
 Open [http://localhost:3000](http://localhost:3000).
 
-The storefront only needs `BYPASS_SECRET` to run. The `STORE_BUSINESS_AGENT_*` variables are only required once you reach the admin-agent chapter.
+The storefront needs `BYPASS_SECRET` and `API_BASE_URL`. The agents also need AI Gateway access: the OIDC token from `vercel env pull` (it expires after 12 hours locally, so pull again) or an `AI_GATEWAY_API_KEY`.
 
 ## Environment variables
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
 | `BYPASS_SECRET` | Yes | Vercel deployment-protection bypass secret. Sent as the `x-vercel-protection-bypass` header on every API call. Server-only — never give it a `NEXT_PUBLIC_` prefix. |
-| `API_BASE_URL` | No | Override the backend API base URL. Defaults to `https://vercel-agentic-swag-store-api.vercel.app/api`. |
-| `STORE_BUSINESS_AGENT_URL` | Admin chat only | HTTP base URL of the deployed store-business-agent. |
-| `STORE_BUSINESS_AGENT_BASIC_USER` | Admin chat only | HTTP Basic auth user matching the agent's `ADMIN_AGENT_BASIC_USER`. |
-| `STORE_BUSINESS_AGENT_BASIC_PASSWORD` | Admin chat only | HTTP Basic auth password matching the agent's `ADMIN_AGENT_BASIC_PASSWORD`. |
+| `API_BASE_URL` | Yes | Store API base URL, ending in `/api`. Prepopulated by the template's Deploy button; keep the provided value. |
+| `VERCEL_OIDC_TOKEN` | Local AI calls | AI Gateway credential written by `vercel env pull`; expires after 12 hours locally. Not needed on Vercel, where OIDC is automatic. |
+| `AI_GATEWAY_API_KEY` | No | AI Gateway API key, used instead of OIDC when set. Server-only. |
 | `NEXT_PUBLIC_SITE_URL` | No | Public site URL used for metadata. Defaults to `http://localhost:3000`. |
 
 `.env.local` is gitignored; `.env.example` is the redacted template.
@@ -49,7 +51,8 @@ The storefront only needs `BYPASS_SECRET` to run. The `STORE_BUSINESS_AGENT_*` v
 | `pnpm dev` | Start the dev server on http://localhost:3000 |
 | `pnpm build` | Production build |
 | `pnpm start` | Serve the production build |
-| `pnpm lint` | Wired to `eslint .`, but ESLint is not installed yet — this fails until a linter is added |
+| `pnpm lint` | ESLint with Next.js's recommended rules (`eslint.config.mjs`) |
+| `pnpm type-check` | TypeScript check (`next build` skips type errors via `ignoreBuildErrors`) |
 
 There is no test framework configured.
 
@@ -99,4 +102,4 @@ Render modes: `/` is **static** (`force-static`, `revalidate = 60`), `/products/
 
 ## Deployment
 
-Deploys to [Vercel](https://vercel.com). In the project's environment variables set `BYPASS_SECRET` (and the `STORE_BUSINESS_AGENT_*` values if you've built the admin-agent chapter). `images.remotePatterns` in `next.config.mjs` is whitelisted for the Vercel Blob hosts the API serves product images from — add hostnames there if the API starts returning images from a new domain.
+Deploys to [Vercel](https://vercel.com). In the project's environment variables set `BYPASS_SECRET` and `API_BASE_URL` (the Deploy button does this). AI Gateway uses the deployment's OIDC token automatically. `images.remotePatterns` in `next.config.mjs` is whitelisted for the Vercel Blob hosts the API serves product images from — add hostnames there if the API starts returning images from a new domain.

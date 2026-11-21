@@ -25,3 +25,5 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+# The redacted template is committed on purpose (names only, no values)
+!.env.example
