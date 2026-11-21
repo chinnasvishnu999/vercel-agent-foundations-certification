@@ -27,3 +27,4 @@ yarn-error.log*
 next-env.d.ts
 # The redacted template is committed on purpose (names only, no values)
 !.env.example
+/.swc
