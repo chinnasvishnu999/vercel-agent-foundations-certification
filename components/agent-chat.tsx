@@ -1,8 +1,6 @@
 "use client";
 
-import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport } from "ai";
-import { AlertCircle, Loader2 } from "lucide-react";
+import { AlertCircle, Loader2, RotateCcw } from "lucide-react";
 import { useState } from "react";
 
 import {
@@ -29,6 +27,7 @@ import { Suggestion, Suggestions } from "@/components/ai-elements/suggestion";
 import { ProductDetailCard } from "@/components/shopping/product-detail-card";
 import { ProductResults } from "@/components/shopping/product-results";
 import { ToolPending, ToolProblem } from "@/components/shopping/tool-status";
+import { useShoppingChat } from "@/components/shopping/use-shopping-chat";
 import { Button } from "@/components/ui/button";
 import type { ShoppingUIMessage } from "@/lib/agent-types";
 
@@ -42,10 +41,8 @@ type ShoppingPart = ShoppingUIMessage["parts"][number];
 
 export function AgentChat() {
   const [input, setInput] = useState("");
-  const { messages, sendMessage, status, stop, error, regenerate, clearError } =
-    useChat<ShoppingUIMessage>({
-      transport: new DefaultChatTransport({ api: "/api/chat" }),
-    });
+  const { messages, sendMessage, status, stop, reset, error, regenerate, clearError } =
+    useShoppingChat();
 
   const busy = status === "submitted" || status === "streaming";
 
@@ -136,7 +133,20 @@ export function AgentChat() {
             />
           </PromptInputBody>
           <PromptInputFooter>
-            <PromptInputTools />
+            <PromptInputTools>
+              {messages.length > 0 && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={reset}
+                  aria-label="Start a new chat"
+                >
+                  <RotateCcw aria-hidden="true" />
+                  New chat
+                </Button>
+              )}
+            </PromptInputTools>
             <PromptInputSubmit
               status={status}
               onStop={stop}

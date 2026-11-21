@@ -1,0 +1,6 @@
+# pnpm only runs dependency install scripts that are explicitly allowed.
+# These native packages come with the Workflow SDK (compiler, CBOR, bundler).
+allowBuilds:
+  "@swc/core": true
+  cbor-extract: true
+  esbuild: true
