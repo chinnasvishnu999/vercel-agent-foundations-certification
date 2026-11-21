@@ -3,17 +3,20 @@
 // guard). The browser only imports their *types* via `import type`.
 
 import { tool } from "ai";
+import { start } from "workflow/api";
 import { z } from "zod";
 
 import {
   ApiRequestError,
   getCategories,
+  getOrder,
   getProductById,
   getProducts,
   getProductStock,
 } from "@/lib/api";
 import { formatPrice } from "@/lib/format";
 import type { Product } from "@/lib/types";
+import { returnOrderFlow } from "@/lib/workflows/return-flow";
 
 /**
  * Shopping-agent tools. Each `execute` is a Workflow step ("use step"), so it
@@ -235,8 +238,118 @@ export const getProductDetails = tool({
   execute: getProductDetailsStep,
 });
 
+// --- Returns ---------------------------------------------------------------------
+
+const RETURNABLE_STATUSES = new Set(["fulfilled", "shipped", "delivered"]);
+
+/**
+ * Validates the order, then starts the durable return workflow and returns at
+ * once, so the chat can confirm the return is filed without waiting for it.
+ * The customer notification, refund pre-authorization and filing happen in
+ * returnOrderFlow; the shopper can follow progress on the return card.
+ */
+export async function returnOrderStep({
+  orderId,
+  reason,
+  productIds,
+  productNames,
+}: {
+  orderId: string;
+  reason: string;
+  productIds?: string[];
+  productNames?: string[];
+}) {
+  "use step";
+  let order;
+  try {
+    order = await getOrder(orderId);
+  } catch (err) {
+    return handleStoreError(err, "order");
+  }
+  if (!RETURNABLE_STATUSES.has(order.status)) {
+    const why =
+      order.status === "paid"
+        ? "it hasn't shipped yet"
+        : order.status === "cancelled"
+          ? "it was cancelled"
+          : `its status is "${order.status}"`;
+    return {
+      status: "invalid" as const,
+      message: `Order ${orderId} can't be returned because ${why}.`,
+    };
+  }
+
+  const itemName = (item: (typeof order.items)[number]) =>
+    (item as { product?: { name?: string } }).product?.name ?? item.productId;
+  const ids = productIds?.length ? new Set(productIds) : null;
+  const names = productNames?.length ? productNames.map(keywords).filter((w) => w.length > 0) : null;
+  const lines = order.items.filter((item) => {
+    if (!ids && !names) return true;
+    if (ids?.has(item.productId)) return true;
+    const label = `${itemName(item)} ${item.productId}`.toLowerCase().replace(/[^a-z0-9]+/g, "");
+    return names?.some((words) => words.every((w) => label.includes(w))) ?? false;
+  });
+  if (lines.length === 0) {
+    return {
+      status: "invalid" as const,
+      message: `None of those products are in order ${orderId}. It contains: ${order.items.map(itemName).join(", ")}.`,
+    };
+  }
+
+  const run = await start(returnOrderFlow, [
+    {
+      orderId,
+      reason,
+      items: lines.map((l) => ({ productId: l.productId, quantity: l.quantity })),
+    },
+  ]);
+
+  return {
+    status: "filed" as const,
+    orderId,
+    trackingId: run.runId,
+    reason,
+    items: lines.map((l) => ({
+      productId: l.productId,
+      name: itemName(l),
+      quantity: l.quantity,
+      lineTotal: formatPrice(l.lineTotal, order.currency),
+    })),
+  };
+}
+
+export const returnOrder = tool({
+  description:
+    "File a return for a delivered order. Requires the order number and the shopper's reason. Optionally limit it to some products in the order; otherwise every item is returned. The return is processed in the background (customer notified, refund pre-authorized, return filed) and the result is shown to the shopper.",
+  inputSchema: z.object({
+    orderId: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9_-]{1,40}$/, "Order numbers contain only letters, digits, - and _.")
+      .describe("The order number, e.g. '11111'."),
+    reason: z
+      .string()
+      .trim()
+      .min(3)
+      .max(500)
+      .describe("Why the shopper is returning it, in their words (3-500 characters)."),
+    productIds: z
+      .array(z.string().trim().min(1).max(120))
+      .max(20)
+      .optional()
+      .describe("Product ids from the order to return. Omit both lists to return the whole order."),
+    productNames: z
+      .array(z.string().trim().min(2).max(120))
+      .max(20)
+      .optional()
+      .describe("Product names the shopper mentioned, e.g. 'hoodie'. Matched against the order's items."),
+  }),
+  execute: returnOrderStep,
+});
+
 export const shoppingTools = {
   searchProducts,
   getAllCategories,
   getProductDetails,
+  returnOrder,
 };
