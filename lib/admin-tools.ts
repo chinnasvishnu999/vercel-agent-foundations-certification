@@ -39,11 +39,12 @@ const dateRange = {
  * admin sandbox for calculations. A sandbox problem never hides the data.
  */
 async function saveForSandbox(
+  workspace: string,
   name: string,
   value: { filters: unknown; meta: unknown; rows: object[] },
 ): Promise<{ path: string; rowCount: number; rowFields: string[] } | null> {
   try {
-    const path = await writeDataset(name, value);
+    const path = await writeDataset(workspace, name, value);
     // Tell the agent exactly how the file is shaped, so commands don't guess.
     return { path, rowCount: value.rows.length, rowFields: Object.keys(value.rows[0] ?? {}) };
   } catch (err) {
@@ -77,7 +78,7 @@ export async function getSupportTicketsStep(input: {
     | "other";
   assignee?: string;
   limit?: number;
-}) {
+}, workspace: string) {
   "use step";
   try {
     const { data, meta } = await getBackOfficeSupportTickets(input);
@@ -95,7 +96,7 @@ export async function getSupportTicketsStep(input: {
         createdAt: t.createdAt,
         lastMessageAt: t.lastMessageAt,
       }));
-    const sandboxFile = await saveForSandbox("support-tickets", { filters: input, meta, rows: all });
+    const sandboxFile = await saveForSandbox(workspace, "support-tickets", { filters: input, meta, rows: all });
     const { rows, truncated } = capped(all);
     return {
       status: "ok" as const,
@@ -116,7 +117,7 @@ export async function getReturnsHistoryStep(input: {
   status?: "pending" | "processing" | "completed";
   decision?: "approved" | "rejected" | "needs_info";
   limit?: number;
-}) {
+}, workspace: string) {
   "use step";
   try {
     const { data, meta } = await getBackOfficeReturns(input);
@@ -135,7 +136,7 @@ export async function getReturnsHistoryStep(input: {
         createdAt: r.createdAt,
         processedAt: r.processedAt,
       }));
-    const sandboxFile = await saveForSandbox("returns", { filters: input, meta, rows: all });
+    const sandboxFile = await saveForSandbox(workspace, "returns", { filters: input, meta, rows: all });
     const { rows, truncated } = capped(all);
     return {
       status: "ok" as const,
@@ -156,7 +157,7 @@ export async function getInventoryStockStep(input: {
   inStock?: boolean;
   page?: number;
   limit?: number;
-}) {
+}, workspace: string) {
   "use step";
   try {
     const { data, meta } = await getBackOfficeStock(input);
@@ -169,10 +170,18 @@ export async function getInventoryStockStep(input: {
         lowStock: s.lowStock,
         updatedAt: s.updatedAt,
       }));
-    const sandboxFile = await saveForSandbox("inventory", { filters: input, meta, rows: stock });
+    const sandboxFile = await saveForSandbox(workspace, "inventory", { filters: input, meta, rows: stock });
+    // Ids the store doesn't know come back as no rows; say so explicitly so a
+    // wrong id is never read as "out of stock".
+    const found = new Set(stock.map((s) => s.productId));
+    const unknownProductIds = (input.productIds ?? []).filter((id) => !found.has(id));
     return {
       status: "ok" as const,
       pagination: meta.pagination,
+      ...(unknownProductIds.length > 0 && {
+        unknownProductIds,
+        note: "No product exists with these ids (this is not a stock level). Get ids from tool results or searchProducts.",
+      }),
       sandboxFile,
       stock,
     };
@@ -185,7 +194,7 @@ export async function getSalesAnalyticsStep(input: {
   from?: string;
   to?: string;
   productId?: string;
-}) {
+}, workspace: string) {
   "use step";
   try {
     const { data, meta } = await getBackOfficeSales(input);
@@ -209,7 +218,7 @@ export async function getSalesAnalyticsStep(input: {
         revenue: formatPrice(row.revenue, row.currency),
       })),
     };
-    const sandboxFile = await saveForSandbox("sales", {
+    const sandboxFile = await saveForSandbox(workspace, "sales", {
       filters: input,
       meta,
       rows: result.products,
@@ -256,7 +265,7 @@ export async function saveMemoryStep({
 
 // --- Tool definitions ----------------------------------------------------------
 
-export const getSupportTickets = tool({
+const getSupportTickets = (workspace: string) => tool({
   description:
     "Read support tickets, newest first. Filter by date range, status, priority, category, assignee (staff username) and limit. Read-only.",
   inputSchema: z.object({
@@ -274,10 +283,10 @@ export const getSupportTickets = tool({
       .describe("Staff username, e.g. 'alex'. Unassigned tickets are excluded when set."),
     limit: z.number().int().min(1).max(500).optional().describe("1-500, default 25."),
   }),
-  execute: getSupportTicketsStep,
+  execute: (input) => getSupportTicketsStep(input, workspace),
 });
 
-export const getReturnsHistory = tool({
+const getReturnsHistory = (workspace: string) => tool({
   description:
     "Read historical returns with their order and refund details. Filter by date range, status, decision and limit. Read-only.",
   inputSchema: z.object({
@@ -286,10 +295,10 @@ export const getReturnsHistory = tool({
     decision: z.enum(["approved", "rejected", "needs_info"]).optional(),
     limit: z.number().int().min(1).max(500).optional().describe("1-500, default 25."),
   }),
-  execute: getReturnsHistoryStep,
+  execute: (input) => getReturnsHistoryStep(input, workspace),
 });
 
-export const getInventoryStock = tool({
+const getInventoryStock = (workspace: string) => tool({
   description:
     "Read current stock levels. Filter by product ids, low stock (1-5 units) and in stock; results are paginated (page, limit up to 200). Read-only.",
   inputSchema: z.object({
@@ -299,17 +308,17 @@ export const getInventoryStock = tool({
     page: z.number().int().min(1).optional().describe("1-based page number, default 1."),
     limit: z.number().int().min(1).max(200).optional().describe("1-200, default 50."),
   }),
-  execute: getInventoryStockStep,
+  execute: (input) => getInventoryStockStep(input, workspace),
 });
 
-export const getSalesAnalytics = tool({
+const getSalesAnalytics = (workspace: string) => tool({
   description:
     "Read sales totals per product (units, orders, revenue) for a date range, optionally for one product. Read-only.",
   inputSchema: z.object({
     ...dateRange,
     productId: z.string().trim().min(1).max(120).optional().describe("Restrict to one product id."),
   }),
-  execute: getSalesAnalyticsStep,
+  execute: (input) => getSalesAnalyticsStep(input, workspace),
 });
 
 export const bash = tool({
@@ -321,12 +330,12 @@ export const bash = tool({
       .trim()
       .min(1)
       .max(4000)
-      .describe("The bash command, e.g. jq over data/sales.json. Runs in /vercel/sandbox."),
+      .describe("The bash command, e.g. jq over a sandboxFile.path. Runs in /vercel/sandbox."),
   }),
   execute: runSandboxCommandStep,
 });
 
-export function createSaveMemoryTool(today: string) {
+function createSaveMemoryTool(today: string) {
   return tool({
     description:
       "Save a durable note to the admin's memory file (kept across conversations): an employee preference, a correction to something you got wrong, or business context. Never save secrets or store data that changes (sales, stock).",
@@ -343,15 +352,23 @@ export function createSaveMemoryTool(today: string) {
   });
 }
 
-export const adminTools = {
-  getSupportTickets,
-  getReturnsHistory,
-  getInventoryStock,
-  getSalesAnalytics,
-  // Catalog context: identify products before combining back-office data.
-  searchProducts,
-  getAllCategories,
-  bash,
-  // saveMemory is added per conversation (it needs today's date): see admin-agent.ts.
-  saveMemory: createSaveMemoryTool("1970-01-01"),
-};
+/**
+ * The admin agent's tools for one conversation: `today` dates memory notes and
+ * `workspace` is the conversation's own data folder in the sandbox.
+ */
+export function createAdminTools(today: string, workspace: string) {
+  return {
+    getSupportTickets: getSupportTickets(workspace),
+    getReturnsHistory: getReturnsHistory(workspace),
+    getInventoryStock: getInventoryStock(workspace),
+    getSalesAnalytics: getSalesAnalytics(workspace),
+    // Catalog context: identify products before combining back-office data.
+    searchProducts,
+    getAllCategories,
+    bash,
+    saveMemory: createSaveMemoryTool(today),
+  };
+}
+
+/** Tool set shape for the chat's message types (values are placeholders). */
+export const adminTools = createAdminTools("1970-01-01", "types");

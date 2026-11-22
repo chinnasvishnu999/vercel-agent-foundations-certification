@@ -39,15 +39,35 @@ export async function getAdminSandbox(): Promise<Sandbox> {
   });
 }
 
-/** Save a fetched back-office dataset as JSON for later sandbox computation. */
-export async function writeDataset(name: string, value: unknown): Promise<string> {
+/**
+ * Save a fetched back-office dataset as JSON for later sandbox computation.
+ * Each conversation gets its own folder (data/<workspace>/), so admins asking
+ * at the same time never overwrite each other's files.
+ */
+export async function writeDataset(workspace: string, name: string, value: unknown): Promise<string> {
   const sandbox = await getAdminSandbox();
-  const path = `${DATA_DIR}/${name}.json`;
+  const dir = `${DATA_DIR}/${workspace}`;
+  const path = `${dir}/${name}.json`;
   await sandbox.mkDir(`${SANDBOX_HOME}/${DATA_DIR}`).catch(() => {});
+  await sandbox.mkDir(`${SANDBOX_HOME}/${dir}`).catch(() => {});
   await sandbox.writeFiles([
     { path: `${SANDBOX_HOME}/${path}`, content: Buffer.from(JSON.stringify(value, null, 2)) },
   ]);
   return path;
+}
+
+/** Remove conversation folders older than a day (datasets are re-fetched anyway). */
+export async function cleanupOldWorkspaces(): Promise<void> {
+  const sandbox = await getAdminSandbox();
+  await sandbox.runCommand({
+    cmd: "bash",
+    args: [
+      "-c",
+      `mkdir -p ${DATA_DIR} && find ${DATA_DIR} -mindepth 1 -maxdepth 1 -type d -mmin +1440 -exec rm -rf {} + ; find ${DATA_DIR} -maxdepth 1 -type f -name '*.json' -delete`,
+    ],
+    cwd: SANDBOX_HOME,
+    signal: AbortSignal.timeout(COMMAND_TIMEOUT_MS),
+  });
 }
 
 function cap(text: string): { text: string; truncated: boolean } {
