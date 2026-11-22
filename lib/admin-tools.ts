@@ -259,8 +259,13 @@ export async function saveMemoryStep({
       message: "Memory can't store credentials, passwords or secrets.",
     };
   }
-  const memory = await appendMemory(kind, note, today);
-  return { status: "saved" as const, kind, note, entries: memory.split("\n").filter(Boolean).length };
+  const { memory, added } = await appendMemory(kind, note, today);
+  return {
+    status: added ? ("saved" as const) : ("already_saved" as const),
+    kind,
+    note,
+    entries: memory.split("\n").filter(Boolean).length,
+  };
 }
 
 // --- Tool definitions ----------------------------------------------------------

@@ -115,14 +115,28 @@ export async function readMemory(): Promise<string> {
   return text.startsWith(MEMORY_HEADER) ? text.slice(MEMORY_HEADER.length).trim() : text.trim();
 }
 
-/** Append one dated note to the memory file and return the full updated memory. */
-export async function appendMemory(kind: string, note: string, today: string): Promise<string> {
+/**
+ * Append one dated note to the memory file. A note already saved (same kind
+ * and text, any date) isn't written twice. Returns the full memory and
+ * whether anything was added.
+ */
+export async function appendMemory(
+  kind: string,
+  note: string,
+  today: string,
+): Promise<{ memory: string; added: boolean }> {
   const sandbox = await getAdminSandbox();
   const path = `${SANDBOX_HOME}/${MEMORY_FILE}`;
   const current = await sandbox.readFileToBuffer({ path });
   const base = current ? current.toString("utf8") : MEMORY_HEADER;
-  const line = `- [${today}] (${kind}) ${note.replace(/\s+/g, " ").trim()}\n`;
-  await sandbox.mkDir(`${SANDBOX_HOME}/memory`).catch(() => {});
-  await sandbox.writeFiles([{ path, content: Buffer.from(base + line) }]);
-  return (base + line).slice(MEMORY_HEADER.length).trim();
+  const entry = `(${kind}) ${note.replace(/\s+/g, " ").trim()}`;
+  const exists = base
+    .split("\n")
+    .some((l) => l.replace(/^- \[\d{4}-\d{2}-\d{2}\] /, "").toLowerCase() === entry.toLowerCase());
+  const next = exists ? base : `${base}- [${today}] ${entry}\n`;
+  if (!exists) {
+    await sandbox.mkDir(`${SANDBOX_HOME}/memory`).catch(() => {});
+    await sandbox.writeFiles([{ path, content: Buffer.from(next) }]);
+  }
+  return { memory: next.slice(MEMORY_HEADER.length).trim(), added: !exists };
 }

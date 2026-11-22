@@ -60,12 +60,15 @@ export function AdminToolResult({ part }: { part: AdminToolPart }) {
   }
   if (part.state !== "output-available") return null;
   const output = part.output as Record<string, unknown> & { status: string; message?: string };
-  if (output.status === "saved") {
+  if (output.status === "saved" || output.status === "already_saved") {
     return (
       <p className="flex items-start gap-2 rounded-md bg-muted/60 px-2 py-1 text-xs text-muted-foreground" role="status">
         <BookmarkCheck className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
         <span>
-          <span className="font-medium text-foreground">Saved to memory</span> · {String(output.note)}
+          <span className="font-medium text-foreground">
+            {output.status === "saved" ? "Saved to memory" : "Already in memory"}
+          </span>{" "}
+          · {String(output.note)}
         </span>
       </p>
     );
