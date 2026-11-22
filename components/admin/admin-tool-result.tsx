@@ -1,4 +1,4 @@
-import { AlertCircle, Database, Loader2, SearchX } from "lucide-react";
+import { AlertCircle, BookmarkCheck, Database, Loader2, SearchX } from "lucide-react";
 
 import type { AdminUIMessage } from "@/lib/admin-agent-types";
 
@@ -12,6 +12,7 @@ const LABELS: Record<string, { running: string; done: string }> = {
   "tool-getSalesAnalytics": { running: "Reading sales…", done: "Sales" },
   "tool-searchProducts": { running: "Searching the catalog…", done: "Catalog search" },
   "tool-getAllCategories": { running: "Loading categories…", done: "Categories" },
+  "tool-saveMemory": { running: "Saving to memory…", done: "Memory" },
 };
 
 function day(iso: string) {
@@ -33,6 +34,8 @@ function summary(output: Record<string, unknown>): string {
   if (totals?.revenue) parts.push(`${totals.revenue} revenue, ${totals.unitsSold} units`);
   if (range) parts.push(`${day(range.from)} → ${day(range.to)}`);
   if (output.truncated) parts.push("first 100 shown to the agent");
+  const file = output.sandboxFile as { path?: string } | null | undefined;
+  if (file?.path) parts.push(`saved to sandbox ${file.path}`);
   return parts.join(" · ");
 }
 
@@ -57,6 +60,16 @@ export function AdminToolResult({ part }: { part: AdminToolPart }) {
   }
   if (part.state !== "output-available") return null;
   const output = part.output as Record<string, unknown> & { status: string; message?: string };
+  if (output.status === "saved") {
+    return (
+      <p className="flex items-start gap-2 rounded-md bg-muted/60 px-2 py-1 text-xs text-muted-foreground" role="status">
+        <BookmarkCheck className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+        <span>
+          <span className="font-medium text-foreground">Saved to memory</span> · {String(output.note)}
+        </span>
+      </p>
+    );
+  }
   if (output.status !== "ok") {
     return (
       <p className="flex items-center gap-2 text-xs text-muted-foreground" role="status">

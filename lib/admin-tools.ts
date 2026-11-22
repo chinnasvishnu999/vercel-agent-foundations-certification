@@ -10,6 +10,7 @@ import {
   getBackOfficeStock,
   getBackOfficeSupportTickets,
 } from "@/lib/api";
+import { appendMemory, runInSandbox, writeDataset } from "@/lib/admin-sandbox";
 import { formatPrice } from "@/lib/format";
 import { getAllCategories, handleStoreError, searchProducts } from "@/lib/tools";
 
@@ -32,6 +33,24 @@ const dateRange = {
   from: date.optional().describe("Start date (YYYY-MM-DD or ISO). Defaults to 30 days before `to`."),
   to: date.optional().describe("End date (YYYY-MM-DD or ISO). Defaults to now."),
 };
+
+/**
+ * Save the full dataset (every row, not just what the model sees) into the
+ * admin sandbox for calculations. A sandbox problem never hides the data.
+ */
+async function saveForSandbox(
+  name: string,
+  value: { filters: unknown; meta: unknown; rows: object[] },
+): Promise<{ path: string; rowCount: number; rowFields: string[] } | null> {
+  try {
+    const path = await writeDataset(name, value);
+    // Tell the agent exactly how the file is shaped, so commands don't guess.
+    return { path, rowCount: value.rows.length, rowFields: Object.keys(value.rows[0] ?? {}) };
+  } catch (err) {
+    console.error(`[admin-tools] couldn't save ${name} to the sandbox`, err instanceof Error ? err.message : err);
+    return null;
+  }
+}
 
 function capped<T>(rows: T[]) {
   return {
@@ -62,13 +81,7 @@ export async function getSupportTicketsStep(input: {
   "use step";
   try {
     const { data, meta } = await getBackOfficeSupportTickets(input);
-    const { rows, truncated } = capped(data);
-    return {
-      status: "ok" as const,
-      range: { from: meta.from, to: meta.to },
-      count: meta.count,
-      truncated,
-      tickets: rows.map((t) => ({
+    const all = data.map((t) => ({
         id: t.id,
         subject: t.subject,
         status: t.status,
@@ -81,7 +94,16 @@ export async function getSupportTicketsStep(input: {
         preview: t.messagePreview,
         createdAt: t.createdAt,
         lastMessageAt: t.lastMessageAt,
-      })),
+      }));
+    const sandboxFile = await saveForSandbox("support-tickets", { filters: input, meta, rows: all });
+    const { rows, truncated } = capped(all);
+    return {
+      status: "ok" as const,
+      range: { from: meta.from, to: meta.to },
+      count: meta.count,
+      truncated,
+      sandboxFile,
+      tickets: rows,
     };
   } catch (err) {
     return handleStoreError(err, "support tickets");
@@ -98,13 +120,7 @@ export async function getReturnsHistoryStep(input: {
   "use step";
   try {
     const { data, meta } = await getBackOfficeReturns(input);
-    const { rows, truncated } = capped(data);
-    return {
-      status: "ok" as const,
-      range: { from: meta.from, to: meta.to },
-      count: meta.count,
-      truncated,
-      returns: rows.map((r) => ({
+    const all = data.map((r) => ({
         id: r.id,
         orderId: r.orderId,
         status: r.status,
@@ -118,7 +134,16 @@ export async function getReturnsHistoryStep(input: {
         notes: r.notes,
         createdAt: r.createdAt,
         processedAt: r.processedAt,
-      })),
+      }));
+    const sandboxFile = await saveForSandbox("returns", { filters: input, meta, rows: all });
+    const { rows, truncated } = capped(all);
+    return {
+      status: "ok" as const,
+      range: { from: meta.from, to: meta.to },
+      count: meta.count,
+      truncated,
+      sandboxFile,
+      returns: rows,
     };
   } catch (err) {
     return handleStoreError(err, "returns");
@@ -135,10 +160,7 @@ export async function getInventoryStockStep(input: {
   "use step";
   try {
     const { data, meta } = await getBackOfficeStock(input);
-    return {
-      status: "ok" as const,
-      pagination: meta.pagination,
-      stock: data.map((s) => ({
+    const stock = data.map((s) => ({
         productId: s.productId,
         name: s.product.name,
         category: s.product.category,
@@ -146,7 +168,13 @@ export async function getInventoryStockStep(input: {
         inStock: s.inStock,
         lowStock: s.lowStock,
         updatedAt: s.updatedAt,
-      })),
+      }));
+    const sandboxFile = await saveForSandbox("inventory", { filters: input, meta, rows: stock });
+    return {
+      status: "ok" as const,
+      pagination: meta.pagination,
+      sandboxFile,
+      stock,
     };
   } catch (err) {
     return handleStoreError(err, "inventory");
@@ -161,7 +189,7 @@ export async function getSalesAnalyticsStep(input: {
   "use step";
   try {
     const { data, meta } = await getBackOfficeSales(input);
-    return {
+    const result = {
       status: "ok" as const,
       range: { from: meta.from, to: meta.to, days: meta.days },
       currency: meta.currency,
@@ -181,9 +209,49 @@ export async function getSalesAnalyticsStep(input: {
         revenue: formatPrice(row.revenue, row.currency),
       })),
     };
+    const sandboxFile = await saveForSandbox("sales", {
+      filters: input,
+      meta,
+      rows: result.products,
+    });
+    return { ...result, sandboxFile };
   } catch (err) {
     return handleStoreError(err, "sales");
   }
+}
+
+export async function runSandboxCommandStep({ command }: { command: string }) {
+  "use step";
+  // Infrastructure errors throw (the step retries); a non-zero exit code is a
+  // normal result the agent can read and fix.
+  const result = await runInSandbox(command);
+  return {
+    status: result.exitCode === 0 ? ("ok" as const) : ("failed" as const),
+    ...result,
+  };
+}
+
+const SECRET_HINTS = /password|passwd|secret|token|api[_ -]?key|bypass|letmeinadminagent/i;
+
+export async function saveMemoryStep({
+  kind,
+  note,
+  today,
+}: {
+  kind: "preference" | "correction" | "business_context";
+  note: string;
+  today: string;
+}) {
+  "use step";
+  const bypass = process.env.BYPASS_SECRET;
+  if (SECRET_HINTS.test(note) || (bypass && note.includes(bypass))) {
+    return {
+      status: "invalid" as const,
+      message: "Memory can't store credentials, passwords or secrets.",
+    };
+  }
+  const memory = await appendMemory(kind, note, today);
+  return { status: "saved" as const, kind, note, entries: memory.split("\n").filter(Boolean).length };
 }
 
 // --- Tool definitions ----------------------------------------------------------
@@ -244,6 +312,37 @@ export const getSalesAnalytics = tool({
   execute: getSalesAnalyticsStep,
 });
 
+export const bash = tool({
+  description:
+    "Run a bash command in the admin's isolated Vercel Sandbox (no internet access, 60 s limit). Use it for every calculation over fetched data: each back-office tool result has sandboxFile { path, rowCount, rowFields }; the file is JSON { filters, meta, rows: [...] } where every row has exactly rowFields. jq, node and python3 are available. The command is bash, not Python: run Python with a quoted heredoc so no escaping is needed, e.g. python3 - <<'PY' (newline) script lines (newline) PY. Returns exit code, stdout and stderr.",
+  inputSchema: z.object({
+    command: z
+      .string()
+      .trim()
+      .min(1)
+      .max(4000)
+      .describe("The bash command, e.g. jq over data/sales.json. Runs in /vercel/sandbox."),
+  }),
+  execute: runSandboxCommandStep,
+});
+
+export function createSaveMemoryTool(today: string) {
+  return tool({
+    description:
+      "Save a durable note to the admin's memory file (kept across conversations): an employee preference, a correction to something you got wrong, or business context. Never save secrets or store data that changes (sales, stock).",
+    inputSchema: z.object({
+      kind: z.enum(["preference", "correction", "business_context"]),
+      note: z
+        .string()
+        .trim()
+        .min(5)
+        .max(500)
+        .describe("One concise, self-contained sentence, e.g. 'Report revenue weekly from Monday to Sunday.'"),
+    }),
+    execute: ({ kind, note }) => saveMemoryStep({ kind, note, today }),
+  });
+}
+
 export const adminTools = {
   getSupportTickets,
   getReturnsHistory,
@@ -252,4 +351,7 @@ export const adminTools = {
   // Catalog context: identify products before combining back-office data.
   searchProducts,
   getAllCategories,
+  bash,
+  // saveMemory is added per conversation (it needs today's date): see admin-agent.ts.
+  saveMemory: createSaveMemoryTool("1970-01-01"),
 };

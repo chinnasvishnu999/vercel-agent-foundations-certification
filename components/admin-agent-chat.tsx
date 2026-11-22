@@ -4,6 +4,7 @@ import { AlertCircle, Loader2, RotateCcw } from "lucide-react";
 import { useState } from "react";
 
 import { AdminToolResult, type AdminToolPart } from "@/components/admin/admin-tool-result";
+import { SandboxCommand } from "@/components/admin/sandbox-command";
 import { useAdminChat } from "@/components/admin/use-admin-chat";
 import {
   Conversation,
@@ -31,6 +32,8 @@ const SUGGESTIONS = [
   "Summarize this week's revenue",
   "Which urgent support tickets are still open?",
   "What are the most common return reasons this month?",
+  "Which products had the highest return rates in the last 30 days?",
+  "Which low-stock products sold the most this month?",
 ];
 
 type AdminPart = AdminUIMessage["parts"][number];
@@ -155,6 +158,9 @@ function AdminChatPart({ part, role }: { part: AdminPart; role: string }) {
     ) : (
       <p className="whitespace-pre-wrap">{part.text}</p>
     );
+  }
+  if (part.type === "tool-bash") {
+    return <SandboxCommand part={part as AdminToolPart} />;
   }
   if (part.type.startsWith("tool-")) {
     return <AdminToolResult part={part as AdminToolPart} />;
