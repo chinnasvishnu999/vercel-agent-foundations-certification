@@ -32,9 +32,18 @@ export async function POST(req: Request) {
     );
   }
 
+  // The conversation's sandbox folder: the first message id stays the same
+  // for every turn of a chat (and changes for a new chat), so follow-ups can
+  // reuse files while concurrent conversations stay apart.
+  const firstId = (body.messages[0] as { id?: unknown } | undefined)?.id;
+  const workspace =
+    typeof firstId === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(firstId)
+      ? `chat-${firstId}`
+      : `chat-${crypto.randomUUID()}`;
+
   const run = await start(adminChatFlow, [
     body.messages as UIMessage[],
-    { model: resolveAdminModel(), today: new Date().toISOString().slice(0, 10) },
+    { model: resolveAdminModel(), today: new Date().toISOString().slice(0, 10), workspace },
   ]);
 
   return createUIMessageStreamResponse({
